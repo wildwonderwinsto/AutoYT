@@ -1,0 +1,131 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: shorts_db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: shorts_automation
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: shorts_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shorts_api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./storage:/app/storage
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/shorts_automation
+      - REDIS_URL=redis://redis:6379/0
+
+  # Celery Worker (General tasks)
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shorts_worker
+    command: celery -A workers.celery_app worker --loglevel=info --concurrency=4
+    volumes:
+      - .:/app
+      - ./storage:/app/storage
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/shorts_automation
+      - CELERY_BROKER_URL=redis://redis:6379/1
+
+  # Celery Worker (Video processing - GPU if available)
+  video_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shorts_video_worker
+    command: celery -A workers.celery_app worker --loglevel=info --concurrency=2 -Q video_processing
+    volumes:
+      - .:/app
+      - ./storage:/app/storage
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/shorts_automation
+      - CELERY_BROKER_URL=redis://redis:6379/1
+
+  # Celery Beat (Scheduled tasks)
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shorts_beat
+    command: celery -A workers.celery_app beat --loglevel=info
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+
+  # Flower (Celery monitoring UI)
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shorts_flower
+    command: celery -A workers.celery_app flower --port=5555
+    ports:
+      - "5555:5555"
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/1
+
+volumes:
+  postgres_data:
+  redis_data:
