@@ -8,6 +8,7 @@ import structlog
 
 from workers.celery_app import celery_app
 from app.core.database import async_session_maker
+from app.utils.async_utils import run_async
 
 logger = structlog.get_logger()
 
@@ -58,7 +59,8 @@ def process_content_pool(
                 
                 # Initialize components
                 downloader = VideoDownloader()
-                analyzer = VisionAnalyzer()
+                from app.config import settings
+                analyzer = VisionAnalyzer(use_free=settings.use_free_analyzer)
                 quality_checker = QualityChecker()
                 
                 # Fetch top discovered content
@@ -156,17 +158,29 @@ def process_content_pool(
                         
                         # AI Vision Analysis
                         try:
+                            # Pass metadata for free analyzer
+                            video_metadata = {
+                                "title": content.title,
+                                "description": content.description,
+                                "views": content.views or 0,
+                                "likes": content.likes or 0,
+                                "comments": content.comments or 0,
+                                "upload_date": content.upload_date
+                            }
                             analysis_result = await analyzer.analyze_video(
                                 video_path=local_path,
                                 niche_context=niche,
-                                content_id=str(content.content_id)
+                                content_id=str(content.content_id),
+                                metadata=video_metadata
                             )
                             analyzed += 1
                             
                             # Save analysis
+                            from app.config import settings
+                            model_name = "free-vision" if settings.use_free_analyzer else "gpt-4-vision"
                             analysis = VideoAnalysis(
                                 content_id=content.content_id,
-                                ai_model="gpt-4-vision",
+                                ai_model=model_name,
                                 quality_score=analysis_result.visual_quality_score,
                                 relevance_score=analysis_result.relevance_score,
                                 virality_score=analysis_result.virality_potential,
@@ -253,7 +267,7 @@ def process_content_pool(
                 await session.commit()
                 raise
     
-    return asyncio.run(_process())
+    return run_async(_process())
 
 
 @celery_app.task(bind=True, name="analysis.analyze_single_video")
@@ -279,7 +293,8 @@ def analyze_single_video(
         from sqlalchemy import select, delete
         
         async with async_session_maker() as session:
-            analyzer = VisionAnalyzer()
+            from app.config import settings
+            analyzer = VisionAnalyzer(use_free=settings.use_free_analyzer)
             
             # Delete existing analysis
             await session.execute(
@@ -295,9 +310,11 @@ def analyze_single_video(
             )
             
             # Save new analysis
+            from app.config import settings
+            model_name = "free-vision" if settings.use_free_analyzer else "gpt-4-vision"
             analysis = VideoAnalysis(
                 content_id=content_id,
-                ai_model="gpt-4-vision",
+                ai_model=model_name,
                 quality_score=result.visual_quality_score,
                 relevance_score=result.relevance_score,
                 virality_score=result.virality_potential,
@@ -312,7 +329,7 @@ def analyze_single_video(
             
             return result.to_dict()
     
-    return asyncio.run(_analyze())
+    return run_async(_analyze())
 
 
 @celery_app.task(name="analysis.reanalyze_batch")
@@ -345,7 +362,8 @@ def reanalyze_batch(
             )
             
             videos = result.all()
-            analyzer = VisionAnalyzer()
+            from app.config import settings
+            analyzer = VisionAnalyzer(use_free=settings.use_free_analyzer)
             
             updated = 0
             for downloaded, content in videos:
@@ -364,9 +382,10 @@ def reanalyze_batch(
                     )
                     
                     # Save
+                    model_name = "free-vision" if settings.use_free_analyzer else "gpt-4-vision"
                     analysis = VideoAnalysis(
                         content_id=content.content_id,
-                        ai_model="gpt-4-vision",
+                        ai_model=model_name,
                         quality_score=analysis_result.visual_quality_score,
                         relevance_score=analysis_result.relevance_score,
                         content_summary=analysis_result.caption_suggestion,
@@ -389,7 +408,7 @@ def reanalyze_batch(
                 "new_niche": new_niche
             }
     
-    return asyncio.run(_reanalyze())
+    return run_async(_reanalyze())
 
 
 @celery_app.task(name="analysis.quality_check_batch")

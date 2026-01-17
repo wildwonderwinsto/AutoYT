@@ -36,20 +36,20 @@ google-api-python-client==2.116.0
 google-auth==2.27.0
 google-auth-httplib2==0.2.0
 
-# Google Cloud TTS
-google-cloud-texttospeech==2.16.1
+# Google Cloud TTS (OPTIONAL - local TTS used by default)
+# google-cloud-texttospeech==2.16.1
 
-# AI/ML
-openai==1.10.0
-anthropic==0.8.1
-tiktoken==0.5.2
+# AI/ML (OPTIONAL - free analyzer used by default)
+# openai==1.10.0
+# anthropic==0.8.1
+# tiktoken==0.5.2
 
-# Cloud Storage
-boto3==1.34.34
-botocore==1.34.34
+# Cloud Storage (OPTIONAL - local storage used by default)
+# boto3==1.34.34
+# botocore==1.34.34
 
-# Scraping & Automation
-apify-client>=1.5.0,<2.0.0
+# Scraping & Automation (OPTIONAL - free scraping used by default)
+# apify-client>=1.5.0,<2.0.0
 beautifulsoup4==4.12.3
 selenium==4.17.2
 
@@ -61,6 +61,7 @@ pandas==2.1.4
 python-dotenv==1.0.0
 python-multipart==0.0.6
 tenacity==8.2.3
+nest-asyncio==1.6.0  # Fix event loop issues with Celery on Windows
 
 # Testing
 pytest==7.4.4

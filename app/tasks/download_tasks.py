@@ -105,7 +105,7 @@ def download_video(
                 if download_result.file_size_bytes else 0
             }
     
-    return asyncio.run(_run())
+    return run_async(_run())
 
 
 @celery_app.task(bind=True, name="download.batch_download")
@@ -187,7 +187,7 @@ def batch_download(
                 "failed": len(contents) - success_count
             }
     
-    return asyncio.run(_run())
+    return run_async(_run())
 
 
 @celery_app.task(bind=True, name="download.batch_download_for_job")
@@ -316,7 +316,7 @@ def batch_download_for_job(
                 "success": success_count
             }
     
-    return asyncio.run(_run())
+    return run_async(_run())
 
 
 @celery_app.task(name="download.cleanup_old_downloads")
@@ -375,4 +375,4 @@ def cleanup_old_downloads(days_old: int = 7):
                 "freed_mb": freed_bytes / (1024 * 1024)
             }
     
-    return asyncio.run(_run())
+    return run_async(_run())

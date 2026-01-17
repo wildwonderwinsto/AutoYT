@@ -7,6 +7,7 @@ from typing import List, Dict, Any
 
 from workers.celery_app import celery_app
 from app.core.database import async_session_maker
+from app.utils.async_utils import run_async
 
 logger = structlog.get_logger()
 
@@ -72,7 +73,7 @@ def prepare_compilation(job_id: str):
                 "recommended_count": recommended_count
             }
     
-    return asyncio.run(_prepare())
+    return run_async(_prepare())
 
 
 @celery_app.task(bind=True, name="editing.render_final_video", queue="video_processing")
@@ -350,7 +351,7 @@ def render_final_video(
                 raise
     
     from pathlib import Path
-    return asyncio.run(_render())
+    return run_async(_render())
 
 
 @celery_app.task(bind=True, name="editing.render_custom_video", queue="video_processing")
@@ -443,7 +444,7 @@ def render_custom_video(
                 "output_path": result.output_path
             }
     
-    return asyncio.run(_render())
+    return run_async(_render())
 
 
 @celery_app.task(name="editing.generate_preview")
@@ -487,4 +488,4 @@ def generate_preview(job_id: str):
             
             return {"preview_path": preview_path}
     
-    return asyncio.run(_preview())
+    return run_async(_preview())

@@ -8,6 +8,8 @@ from workers.celery_app import celery_app
 from app.core.database import async_session_maker
 from app.models.job import Job, JobStatus
 from app.models.platform_content import PlatformContent
+from app.utils.async_utils import run_async
+from app.utils.job_logger import add_job_log
 
 logger = structlog.get_logger()
 
@@ -54,6 +56,15 @@ def run_discovery_job(
                 )
                 await session.commit()
                 
+                # Log job start
+                await add_job_log(
+                    session, job_id,
+                    "info",
+                    f"Starting discovery job for niche: {niche}",
+                    {"niche": niche, "platforms": platforms, "timeframe_hours": timeframe_hours}
+                )
+                await session.commit()
+                
                 logger.info(
                     "Starting discovery job",
                     job_id=job_id,
@@ -62,31 +73,48 @@ def run_discovery_job(
                 )
                 
                 # Initialize orchestrator
+                await add_job_log(session, job_id, "info", f"Initializing discovery orchestrator for platforms: {', '.join(platforms)}")
+                await session.commit()
+                
                 orchestrator = DiscoveryOrchestrator(platforms=platforms)
                 
                 # Discover content
+                await add_job_log(session, job_id, "info", f"Starting content discovery across {len(platforms)} platform(s)...")
+                await session.commit()
+                
                 videos = await orchestrator.discover_content(
                     query=niche,
                     timeframe_hours=timeframe_hours,
                     per_platform_limit=per_platform_limit,
-                    min_viral_score=10.0,  # Minimum quality threshold
+                    min_viral_score=0.0,  # Start with no minimum to get results
                     deduplicate=True
                 )
                 
+                # Close orchestrator connections
+                await orchestrator.close()
+                
+                await add_job_log(session, job_id, "info", f"Discovery complete. Found {len(videos)} videos total.")
+                await session.commit()
+                
                 if not videos:
+                    error_msg = "No trending content found for this niche"
                     logger.warning("No videos found", job_id=job_id, niche=niche)
+                    await add_job_log(session, job_id, "error", error_msg, {"niche": niche})
                     await session.execute(
                         update(Job)
                         .where(Job.job_id == job_id)
                         .values(
                             status=JobStatus.FAILED,
-                            error_message="No trending content found for this niche"
+                            error_message=error_msg
                         )
                     )
                     await session.commit()
                     return {"status": "no_content", "job_id": job_id}
                 
                 # Save discovered content to database
+                await add_job_log(session, job_id, "info", f"Saving {len(videos)} discovered videos to database...")
+                await session.commit()
+                
                 inserted_count = 0
                 duplicate_count = 0
                 
@@ -136,6 +164,13 @@ def run_discovery_job(
                 
                 await session.commit()
                 
+                await add_job_log(
+                    session, job_id, "success",
+                    f"Saved {inserted_count} videos (skipped {duplicate_count} duplicates)",
+                    {"inserted": inserted_count, "duplicates": duplicate_count, "total": len(videos)}
+                )
+                await session.commit()
+                
                 # Update job status
                 await session.execute(
                     update(Job)
@@ -165,7 +200,15 @@ def run_discovery_job(
                 }
                 
             except Exception as e:
+                error_msg = str(e)
                 logger.error(f"Discovery job failed: {e}", job_id=job_id)
+                
+                import traceback
+                await add_job_log(
+                    session, job_id, "error",
+                    f"Discovery failed: {error_msg}",
+                    {"error_type": type(e).__name__, "traceback": traceback.format_exc()}
+                )
                 
                 # Update job status to failed
                 await session.execute(
@@ -173,13 +216,13 @@ def run_discovery_job(
                     .where(Job.job_id == job_id)
                     .values(
                         status=JobStatus.FAILED,
-                        error_message=str(e)
+                        error_message=error_msg
                     )
                 )
                 await session.commit()
                 raise
     
-    return asyncio.run(_process())
+    return run_async(_process())
 
 
 @celery_app.task(bind=True, name="discovery.discover_platform")
@@ -198,12 +241,13 @@ def discover_platform(
     import asyncio
     
     async def _discover():
+        from app.config import settings
         if platform == "youtube":
             from app.core.discovery.youtube_client import YouTubeClient
-            client = YouTubeClient()
+            client = YouTubeClient(use_api=not settings.use_free_discovery)
         else:
             from app.core.discovery.social_client import ApifySocialClient
-            client = ApifySocialClient(platform)
+            client = ApifySocialClient(platform, use_free=settings.use_free_discovery)
         
         try:
             videos = await client.discover_trending(query, timeframe_hours, limit)
@@ -225,7 +269,7 @@ def discover_platform(
         finally:
             await client.close()
     
-    return asyncio.run(_discover())
+    return run_async(_discover())
 
 
 @celery_app.task(name="discovery.start_discovery_pipeline")
@@ -291,7 +335,7 @@ def start_discovery_pipeline(job_id: str):
                 "platforms": platforms
             }
     
-    return asyncio.run(_start())
+    return run_async(_start())
 
 
 @celery_app.task(name="discovery.refresh_trending")
@@ -336,7 +380,7 @@ def refresh_trending(
         logger.info("Trending refresh complete", results=results)
         return results
     
-    return asyncio.run(_refresh())
+    return run_async(_refresh())
 
 
 @celery_app.task(name="discovery.analyze_viral_potential")
@@ -359,8 +403,10 @@ def analyze_viral_potential(video_urls: list):
             video_id = extract_video_id_from_url(url)
             
             if platform == "youtube" and video_id:
-                client = YouTubeClient()
+                from app.config import settings
+                client = YouTubeClient(use_api=not settings.use_free_discovery)
                 video = await client.get_video_details(video_id)
+                await client.close()
                 
                 if video:
                     results.append({
@@ -379,4 +425,4 @@ def analyze_viral_potential(video_urls: list):
         
         return results
     
-    return asyncio.run(_analyze())
+    return run_async(_analyze())

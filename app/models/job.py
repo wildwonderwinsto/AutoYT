@@ -54,6 +54,7 @@ class Job(Base):
     )
     completed_at = Column(TIMESTAMP(timezone=True), nullable=True)
     error_message = Column(Text, nullable=True)
+    logs = Column(JSONB, nullable=True, default=list)  # Array of log entries
     
     # Relationships
     platform_content = relationship(

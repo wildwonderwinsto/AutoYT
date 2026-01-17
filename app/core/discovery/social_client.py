@@ -50,15 +50,19 @@ class ApifySocialClient(BasePlatformClient):
         }
     }
     
-    def __init__(self, platform: str, apify_api_key: str = None):
+    def __init__(self, platform: str, apify_api_key: str = None, use_free: bool = True):
         if platform not in self.ACTOR_MAPPING:
             raise ValueError(f"Unsupported platform: {platform}. Choose from: {list(self.ACTOR_MAPPING.keys())}")
         
         super().__init__(platform, rate_limit_per_minute=20)
         self.apify_api_key = apify_api_key or settings.apify_api_key
+        # Force free mode if no valid API key or if explicitly requested
+        has_valid_key = bool(self.apify_api_key) and self.apify_api_key not in ["", "your_apify_key", "apify_..."]
+        self.use_free = use_free or not has_valid_key
         self.actor_id = self.ACTOR_MAPPING[platform]
         self.config = self.PLATFORM_CONFIG[platform]
         self._client = None
+        self._free_client = None
     
     @property
     def client(self):
@@ -77,6 +81,14 @@ class ApifySocialClient(BasePlatformClient):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(_executor, func)
     
+    @property
+    def free_client(self):
+        """Lazy initialization of free client."""
+        if self._free_client is None and self.use_free:
+            from app.core.discovery.free_social_client import FreeSocialClient
+            self._free_client = FreeSocialClient(self.platform_name)
+        return self._free_client
+    
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=30))
     async def discover_trending(
         self,
@@ -87,6 +99,8 @@ class ApifySocialClient(BasePlatformClient):
         """
         Discover trending videos from TikTok, Instagram, or Snapchat.
         
+        Uses free client if no Apify API key, otherwise uses Apify.
+        
         Args:
             query: Hashtag or search query
             timeframe_hours: Not directly filterable, used for scoring
@@ -95,8 +109,12 @@ class ApifySocialClient(BasePlatformClient):
         Returns:
             List of DiscoveredVideo objects
         """
+        # Use free client if enabled
+        if self.use_free:
+            return await self.free_client.discover_trending(query, timeframe_hours, limit)
+        
         logger.info(
-            f"{self.platform_name} discovery starting",
+            f"{self.platform_name} discovery starting (Apify)",
             query=query,
             limit=limit
         )
@@ -154,6 +172,10 @@ class ApifySocialClient(BasePlatformClient):
             
         except Exception as e:
             logger.error(f"Apify discovery failed for {self.platform_name}: {e}")
+            # Fallback to free client on error
+            if self.free_client:
+                logger.info(f"Falling back to free {self.platform_name} client")
+                return await self.free_client.discover_trending(query, timeframe_hours, limit)
             return []
     
     def _build_actor_input(self, hashtag: str, limit: int) -> Dict[str, Any]:

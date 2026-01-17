@@ -30,21 +30,23 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/2"
     
     # Storage
-    storage_type: Literal["local", "s3", "hybrid"] = "hybrid"
+    storage_type: Literal["local", "s3", "hybrid"] = "local"  # Default to free local storage
     local_storage_path: str = "./storage"
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
     aws_s3_bucket: str | None = None
     aws_region: str = "us-east-1"
     
-    # AI Services
+    # AI Services (optional - free analyzer used by default)
     openai_api_key: str = ""
     openai_model: str = "gpt-4-vision-preview"
     openai_max_tokens: int = 4096
+    use_free_analyzer: bool = True  # Use free computer vision by default
     
-    # Platform APIs
+    # Platform APIs (optional - free methods used by default)
     youtube_api_key: str = ""
     apify_api_key: str = ""
+    use_free_discovery: bool = True  # Use free scraping by default
     
     # Rate Limiting
     max_concurrent_downloads: int = 5

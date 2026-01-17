@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from typing import List, Optional
 from uuid import UUID
+import structlog
 
 from app.core.database import get_db
 from app.models.job import Job
@@ -12,6 +13,7 @@ from app.schemas.job import JobCreate, JobResponse, JobUpdate, JobStatus
 from app.tasks.discovery_tasks import start_discovery_pipeline
 
 router = APIRouter()
+logger = structlog.get_logger()
 
 
 @router.post("/", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
@@ -119,6 +121,7 @@ async def delete_job(
     
     await db.delete(job)
     await db.commit()
+    return None
 
 
 @router.post("/{job_id}/retry", response_model=JobResponse)
@@ -151,3 +154,36 @@ async def retry_job(
     start_discovery_pipeline.delay(str(job.job_id))
     
     return job
+
+
+@router.get("/{job_id}/logs")
+async def get_job_logs(
+    job_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get logs for a specific job"""
+    try:
+        result = await db.execute(select(Job).where(Job.job_id == job_id))
+        job = result.scalar_one_or_none()
+        
+        if not job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Job {job_id} not found"
+            )
+        
+        # Handle case where logs column might not exist yet
+        logs = getattr(job, 'logs', None) or []
+        
+        return {
+            "job_id": str(job_id),
+            "status": job.status,
+            "logs": logs,
+            "error_message": job.error_message
+        }
+    except Exception as e:
+        logger.error(f"Error fetching job logs: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch logs: {str(e)}"
+        )

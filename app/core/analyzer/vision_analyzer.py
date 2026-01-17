@@ -1,4 +1,4 @@
-"""GPT-4 Vision Analyzer for video content evaluation."""
+"""Vision Analyzer for video content evaluation - supports both GPT-4 Vision (paid) and free computer vision."""
 
 import base64
 import asyncio
@@ -66,9 +66,15 @@ class VisionAnalyzer:
     - Caption/description generation
     """
     
-    def __init__(self, api_key: str = None, model: str = None):
-        self.api_key = api_key or settings.openai_api_key
-        self.model = model or settings.openai_model
+    def __init__(self, api_key: str = None, model: str = None, use_free: bool = True):
+        # Use free analyzer by default if no API key provided
+        self.use_free = use_free or not (api_key or settings.openai_api_key)
+        if self.use_free:
+            from app.core.analyzer.free_vision_analyzer import FreeVisionAnalyzer
+            self._free_analyzer = FreeVisionAnalyzer()
+        else:
+            self.api_key = api_key or settings.openai_api_key
+            self.model = model or settings.openai_model
         self._client = None
     
     @property
@@ -238,19 +244,27 @@ Evaluation Criteria:
         self,
         video_path: str,
         niche_context: str,
-        content_id: str = ""
+        content_id: str = "",
+        metadata: Optional[Dict[str, Any]] = None
     ) -> AnalysisResult:
         """
-        Analyze a video using GPT-4 Vision.
+        Analyze a video using GPT-4 Vision or free computer vision.
         
         Args:
             video_path: Path to the video file
             niche_context: Content niche for relevance evaluation
             content_id: Optional ID for tracking
+            metadata: Optional video metadata (for free analyzer)
             
         Returns:
             AnalysisResult with comprehensive evaluation
         """
+        # Use free analyzer if enabled or no API key
+        if self.use_free:
+            return await self._free_analyzer.analyze_video(
+                video_path, niche_context, content_id, metadata
+            )
+        
         result = AnalysisResult(content_id=content_id)
         
         # Get video metadata

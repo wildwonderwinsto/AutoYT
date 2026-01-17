@@ -42,7 +42,10 @@ class DiscoveryOrchestrator:
         """Initialize platform clients based on configuration."""
         if "youtube" in self.enabled_platforms:
             try:
-                self._clients["youtube"] = YouTubeClient()
+                from app.config import settings
+                self._clients["youtube"] = YouTubeClient(
+                    use_api=not settings.use_free_discovery
+                )
                 logger.info("YouTube client initialized")
             except Exception as e:
                 logger.error(f"Failed to initialize YouTube client: {e}")
@@ -50,7 +53,10 @@ class DiscoveryOrchestrator:
         for platform in ["tiktok", "instagram", "snapchat"]:
             if platform in self.enabled_platforms:
                 try:
-                    self._clients[platform] = ApifySocialClient(platform)
+                    self._clients[platform] = ApifySocialClient(
+                        platform,
+                        use_free=settings.use_free_discovery
+                    )
                     logger.info(f"{platform.title()} client initialized")
                 except Exception as e:
                     logger.error(f"Failed to initialize {platform} client: {e}")

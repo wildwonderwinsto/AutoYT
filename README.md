@@ -1,20 +1,22 @@
 # 🤖 AutoYT: AI-Powered Shorts Factory
 
-AutoYT is an enterprise-grade automation pipeline that autonomously discovers, analyzes, and edits viral short-form content. It leverages GPT-4 Vision for content analysis and a custom video composition engine to generate high-retention "Ranking" videos for YouTube Shorts, TikTok, and Instagram Reels.
+AutoYT is an enterprise-grade automation pipeline that autonomously discovers, analyzes, and edits viral short-form content. It uses **free computer vision** for content analysis (with optional GPT-4 Vision support) and a custom video composition engine to generate high-retention "Ranking" videos for YouTube Shorts, TikTok, and Instagram Reels.
+
+**✨ Fully Free & Open Source** - No paid API keys required! Uses free alternatives by default.
 
 ## 🚀 Architecture
 
 The system operates on a 4-Stage Pipeline:
 
 1.  **Discovery Layer** (`/api/v1/discovery`)
-    *   Scrapes trending content from YouTube, TikTok, and Instagram using Apify and official APIs.
+    *   Scrapes trending content from YouTube, TikTok, and Instagram using **free yt-dlp** and HTTP scraping (optional Apify/YouTube API support).
     *   Calculates "Viral Score" based on view velocity and engagement rates.
 2.  **Analysis Layer** (`/api/v1/analysis`)
     *   **Intelligent Downloader:** Batched `yt-dlp` wrapper with rate limiting.
-    *   **Vision Engine:** Uses GPT-4 Vision to analyze frames for quality, safety, watermarks, and viral potential.
+    *   **Vision Engine:** Uses **free computer vision** (OpenCV) to analyze frames for quality, safety, watermarks, and viral potential (optional GPT-4 Vision support).
     *   **Selection Logic:** Weighted ranking algorithm (`Trending * 0.4 + Quality * 0.3 + Relevance * 0.3`).
 3.  **Editing Layer** (`/api/v1/rendering`)
-    *   **Audio Engine:** Google Cloud TTS with "Audio Ducking" (auto-lowering music volume).
+    *   **Audio Engine:** **Free local TTS (pyttsx3)** by default with "Audio Ducking" (optional Google Cloud/OpenAI TTS support).
     *   **Compositor:** MoviePy-based engine for 9:16 resizing, dynamic overlays, and transitions.
 4.  **Delivery**
     *   Production-ready MP4 output with comprehensive metadata.
@@ -55,10 +57,11 @@ The system operates on a 4-Stage Pipeline:
     DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/autoyt
     REDIS_URL=redis://localhost:6379/0
 
-    # AI & APIs
-    OPENAI_API_KEY=sk-...
-    GOOGLE_APPLICATION_CREDENTIALS=path/to/google-creds.json
-    APIFY_API_TOKEN=apify_...
+    # AI & APIs (OPTIONAL - Free alternatives used by default)
+    # OPENAI_API_KEY=sk-...  # Optional - enables GPT-4 Vision (free analyzer used otherwise)
+    # GOOGLE_APPLICATION_CREDENTIALS=path/to/google-creds.json  # Optional - enables Google TTS (local TTS used otherwise)
+    # YOUTUBE_API_KEY=...  # Optional - enables YouTube search (yt-dlp used otherwise)
+    # APIFY_API_TOKEN=apify_...  # Optional - enables Apify scraping (free HTTP scraping used otherwise)
     ```
 
 ---

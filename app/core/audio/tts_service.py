@@ -136,7 +136,7 @@ class TTSService:
         self,
         text: str,
         filename: str = None,
-        provider: str = "auto"
+        provider: str = "local"  # Default to free local TTS
     ) -> TTSResult:
         """
         Generate speech audio from text.
@@ -165,9 +165,9 @@ class TTSService:
         
         output_path = str(self.temp_dir / f"{filename}.wav")
         
-        # Try providers in order
+        # Try providers in order (free first)
         if provider == "auto":
-            providers = ["google", "openai", "local"]
+            providers = ["local", "google", "openai"]  # Free first
         else:
             providers = [provider]
         

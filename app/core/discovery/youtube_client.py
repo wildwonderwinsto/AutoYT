@@ -1,4 +1,4 @@
-"""YouTube Discovery Client using YouTube Data API v3."""
+"""YouTube Discovery Client using YouTube Data API v3 or free yt-dlp."""
 
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
@@ -24,9 +24,12 @@ class YouTubeClient(BasePlatformClient):
     proper quota management.
     """
     
-    def __init__(self, api_key: str = None):
+    def __init__(self, api_key: str = None, use_api: bool = False):
         super().__init__("youtube", rate_limit_per_minute=100)
         self.api_key = api_key or settings.youtube_api_key
+        # Only use API if explicitly enabled AND we have a valid key (not placeholder)
+        has_valid_key = bool(self.api_key) and self.api_key not in ["", "your_youtube_key", "YOUR_YOUTUBE_KEY", "your-api-key"]
+        self.use_api = use_api and has_valid_key
         self._youtube = None
     
     @property
@@ -83,10 +86,20 @@ class YouTubeClient(BasePlatformClient):
             datetime.utcnow() - timedelta(hours=timeframe_hours)
         ).isoformat("T") + "Z"
         
-        if self.youtube:
-            return await self._discover_with_api(query, published_after, limit)
-        else:
-            return await self._discover_with_http(query, published_after, limit)
+        # Try API first if enabled, fallback to free method
+        if self.use_api and self.youtube:
+            try:
+                result = await self._discover_with_api(query, published_after, limit)
+                if result:  # If API returns results, use them
+                    return result
+                # If API returns empty, fall through to free method
+                logger.info("YouTube API returned no results, trying free method")
+            except Exception as e:
+                logger.warning(f"YouTube API failed, falling back to free method: {e}")
+                # Fall through to free method
+        
+        # Use free HTTP method (yt-dlp based)
+        return await self._discover_with_http(query, published_after, limit)
     
     async def _discover_with_api(
         self,
@@ -130,7 +143,8 @@ class YouTubeClient(BasePlatformClient):
             
         except Exception as e:
             logger.error(f"YouTube API search failed: {e}")
-            return []
+            # Don't return empty - let it fall back to free method
+            raise  # Re-raise so caller can fallback
     
     async def _fetch_video_details(
         self,
@@ -233,65 +247,170 @@ class YouTubeClient(BasePlatformClient):
         published_after: str,
         limit: int
     ) -> List[DiscoveredVideo]:
-        """Fallback: Use direct HTTP requests if google-api-python-client unavailable."""
-        import httpx
+        """
+        Free discovery using yt-dlp with YouTube search.
         
-        base_url = "https://www.googleapis.com/youtube/v3"
+        Uses yt-dlp's ytsearch extractor to find videos without API key.
+        """
+        try:
+            import yt_dlp
+        except ImportError:
+            logger.warning("yt-dlp not available for free YouTube discovery")
+            return []
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            # Search request
-            search_params = {
-                "part": "id,snippet",
-                "q": f"{query} #shorts",
-                "type": "video",
-                "videoDuration": "short",
-                "order": "viewCount",
-                "publishedAfter": published_after,
-                "maxResults": min(limit, 50),
-                "key": self.api_key
+        videos = []
+        
+        try:
+            # Use yt-dlp's ytsearch extractor
+            search_query = f"{query} shorts"
+            
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,  # Need full info for stats
+                'skip_download': True,
             }
             
-            try:
-                response = await self._rate_limited_request(
-                    client.get(f"{base_url}/search", params=search_params)
-                )
-                response.raise_for_status()
-                search_data = response.json()
-                
-                video_ids = [
-                    item["id"]["videoId"]
-                    for item in search_data.get("items", [])
-                    if item["id"].get("videoId")
-                ]
-                
-                if not video_ids:
-                    return []
-                
-                # Get video details
-                details_params = {
-                    "part": "snippet,statistics,contentDetails",
-                    "id": ",".join(video_ids),
-                    "key": self.api_key
-                }
-                
-                details_response = await self._rate_limited_request(
-                    client.get(f"{base_url}/videos", params=details_params)
-                )
-                details_response.raise_for_status()
-                details_data = details_response.json()
-                
-                videos = []
-                for item in details_data.get("items", []):
-                    video = self._normalize_video(item)
-                    if video:
-                        videos.append(video)
-                
-                videos.sort(key=lambda v: v.trending_score, reverse=True)
-                return videos
-                
-            except Exception as e:
-                logger.error(f"YouTube HTTP request failed: {e}")
+            # Run in thread pool since yt-dlp is synchronous
+            def extract_search():
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        # Use ytsearch: prefix for search
+                        search_string = f"ytsearch{limit}:{search_query}"
+                        logger.debug(f"Searching YouTube with: {search_string}")
+                        result = ydl.extract_info(search_string, download=False)
+                        logger.debug(f"yt-dlp returned: {type(result)}, entries: {len(result.get('entries', [])) if result else 0}")
+                        return result
+                except Exception as e:
+                    logger.error(f"yt-dlp extraction failed: {e}", exc_info=True)
+                    raise
+            
+            # Run in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            info = await loop.run_in_executor(None, extract_search)
+            
+            if not info:
+                logger.warning("yt-dlp search returned no results")
                 return []
+            
+            # Extract entries - ytsearch can return different structures
+            entries = []
+            if 'entries' in info:
+                entries = info['entries']
+            elif info and isinstance(info, dict) and 'id' in info:
+                # Single result
+                entries = [info]
+            elif isinstance(info, list):
+                entries = info
+            
+            if not isinstance(entries, list):
+                entries = [entries] if entries else []
+            
+            logger.debug(f"Found {len(entries)} entries from ytsearch")
+            
+            # Extract video IDs and get full details
+            video_ids = []
+            for entry in entries:
+                if entry and isinstance(entry, dict):
+                    vid_id = entry.get('id', '')
+                    if vid_id:
+                        video_ids.append(vid_id)
+            
+            if not video_ids:
+                logger.warning("No video IDs extracted from search results")
+                return []
+            
+            logger.debug(f"Extracting full details for {len(video_ids)} videos...")
+            
+            # Get full video details (ytsearch may return limited info)
+            for video_id in video_ids[:limit]:
+                try:
+                    video_url = f"https://www.youtube.com/watch?v={video_id}"
+                    
+                    # Extract full video info if not already complete
+                    def extract_full_info():
+                        try:
+                            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                                return ydl.extract_info(video_url, download=False)
+                        except Exception as e:
+                            logger.debug(f"Failed to extract full info for {video_id}: {e}")
+                            return None
+                    
+                    full_entry = await loop.run_in_executor(None, extract_full_info)
+                    
+                    if not full_entry:
+                        # Try using the entry from search if available
+                        entry = next((e for e in entries if e.get('id') == video_id), None)
+                        if not entry:
+                            continue
+                    else:
+                        entry = full_entry
+                    
+                    # Parse dates
+                    upload_date = None
+                    if entry.get('upload_date'):
+                        try:
+                            upload_date = datetime.strptime(
+                                entry['upload_date'], 
+                                '%Y%m%d'
+                            )
+                        except:
+                            pass
+                    elif entry.get('timestamp'):
+                        try:
+                            upload_date = datetime.fromtimestamp(entry['timestamp'])
+                        except:
+                            pass
+                    
+                    # Get statistics - handle None values and missing fields
+                    views = int(entry.get('view_count') or entry.get('play_count') or 0)
+                    likes = int(entry.get('like_count') or 0)
+                    comments = int(entry.get('comment_count') or 0)
+                    duration = float(entry.get('duration') or 0)
+                    
+                    # Calculate viral score
+                    viral_score, engagement_rate, view_velocity = self.calculate_viral_score(
+                        views=views,
+                        likes=likes,
+                        comments=comments,
+                        shares=0,
+                        upload_date=upload_date or datetime.now(),
+                        duration_seconds=duration
+                    )
+                    
+                    video = DiscoveredVideo(
+                        platform="youtube",
+                        platform_video_id=video_id,
+                        url=video_url,
+                        title=entry.get('title', '')[:200] or '',
+                        description=entry.get('description', '')[:500] or '',
+                        author=entry.get('uploader', '') or entry.get('channel', '') or '',
+                        author_id=entry.get('channel_id', '') or '',
+                        views=views,
+                        likes=likes,
+                        comments=comments,
+                        shares=0,
+                        duration_seconds=duration,
+                        upload_date=upload_date,
+                        trending_score=viral_score,
+                        engagement_rate=engagement_rate,
+                        view_velocity=view_velocity,
+                        metadata={
+                            "channel": entry.get('channel', ''),
+                            "tags": entry.get('tags', [])
+                        }
+                    )
+                    videos.append(video)
+                except Exception as e:
+                    logger.debug(f"Failed to process video entry: {e}")
+                    continue
+            
+            logger.info(f"Free YouTube discovery found {len(videos)} videos for '{query}'")
+            return videos
+            
+        except Exception as e:
+            logger.error(f"Free YouTube discovery error: {e}", exc_info=True)
+            return []
     
     async def get_video_details(self, video_id: str) -> Optional[DiscoveredVideo]:
         """Get detailed information for a specific YouTube video."""
