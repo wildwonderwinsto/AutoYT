@@ -9,12 +9,6 @@ from datetime import datetime, timedelta
 from app.core.database import get_db
 from app.models.platform_content import PlatformContent
 from app.schemas.video import TrendingContentResponse
-from app.core.discovery import (
-    YouTubeDiscovery,
-    TikTokDiscovery,
-    InstagramDiscovery,
-    SnapchatDiscovery
-)
 
 router = APIRouter()
 
@@ -90,22 +84,17 @@ async def trigger_discovery(
     limit: int = Query(100, ge=10, le=500)
 ):
     """Manually trigger trend discovery for a platform"""
-    discovery_map = {
-        "youtube": YouTubeDiscovery,
-        "tiktok": TikTokDiscovery,
-        "instagram": InstagramDiscovery,
-        "snapchat": SnapchatDiscovery
-    }
+    from app.tasks.discovery_tasks import discover_platform
     
-    discoverer = discovery_map[platform]()
+    # Trigger async discovery task
+    task = discover_platform.delay(platform, niche, limit)
     
-    # This would normally be an async task
-    # For now, return acknowledgment
     return {
         "message": f"Discovery initiated for {platform}",
         "niche": niche,
         "limit": limit,
-        "status": "processing"
+        "status": "processing",
+        "task_id": task.id
     }
 
 

@@ -36,7 +36,7 @@ class PlatformContent(Base):
     duration_seconds = Column(Integer, nullable=True)
     upload_date = Column(TIMESTAMP(timezone=True), nullable=True)
     trending_score = Column(Float, nullable=True, index=True)
-    metadata = Column(JSONB, nullable=True)
+    content_metadata = Column("metadata", JSONB, nullable=True)  # Renamed to avoid SQLAlchemy reserved word conflict
     discovered_at = Column(
         TIMESTAMP(timezone=True),
         server_default=func.now()
