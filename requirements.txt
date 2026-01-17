@@ -29,7 +29,7 @@ pyttsx3==2.90
 httpx==0.26.0
 requests==2.31.0
 aiohttp==3.9.1
-yt-dlp==2024.1.7
+yt-dlp>=2024.01.02
 
 # YouTube API
 google-api-python-client==2.116.0
@@ -49,7 +49,7 @@ boto3==1.34.34
 botocore==1.34.34
 
 # Scraping & Automation
-apify-client==1.5.1
+apify-client>=1.5.0,<2.0.0
 beautifulsoup4==4.12.3
 selenium==4.17.2
 
